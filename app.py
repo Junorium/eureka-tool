@@ -34,14 +34,7 @@ def extract_text(file, file_type):
         return None
     return text
 
-# --- 3. THE BRAIN (Robust Model Selection) ---
-def get_model():
-    # We try the latest Flash model first, then fall back to Pro
-    try:
-        return genai.GenerativeModel("gemini-1.5-flash-latest")
-    except:
-        return genai.GenerativeModel("gemini-pro")
-
+# --- 3. THE BRAIN (Corrected Model Names) ---
 def analyze_pitch(deck_text):
     rubric = """
     SECTION 1: PROBLEM IDENTIFICATION
@@ -86,25 +79,37 @@ def analyze_pitch(deck_text):
     2. **The "Hard Truth"**: One paragraph on why this pitch would fail investment today.
     """
     
-    # ERROR HANDLING WRAPPER
-    try:
-        # Try Primary Model
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e1:
-        # If 1.5-flash fails (NotFound), try Standard Pro
+    # We explicitly try the most stable model names in order of preference
+    model_options = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+    
+    last_error = None
+    for model_name in model_options:
         try:
-            print(f"Primary model failed: {e1}. Switching to fallback...")
-            model = genai.GenerativeModel("gemini-pro")
+            model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             return response.text
-        except Exception as e2:
-            return f"API Error: Both models failed. \nError 1: {e1}\nError 2: {e2}"
+        except Exception as e:
+            last_error = e
+            continue # Try next model
+            
+    # If all fail, return the error
+    return f"API Error: Could not connect to any models. Last error: {last_error}"
 
 # --- 4. THE UI ---
-st.title("EUREKA! Pitch Scorer")
-st.markdown("### Drop in a deck. Get a score. (Still testing)")
+st.title("Eureka Pitch Scorer")
+st.markdown("### Drop in a deck. Get a score.")
+
+# Sidebar for Debugging (Hidden unless clicked)
+with st.sidebar:
+    st.header("Debug Menu")
+    if st.button("Check Available Models"):
+        try:
+            st.write("Your API Key has access to:")
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    st.code(m.name)
+        except Exception as e:
+            st.error(f"Could not list models: {e}")
 
 uploaded_file = st.file_uploader("Upload Pitch Deck", type=["pdf", "pptx"])
 
