@@ -2,9 +2,9 @@ import streamlit as st
 import pdfplumber
 import pptx
 import google.generativeai as genai
-import pandas as pd
 import json
 import re
+import urllib.parse
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Eureka Pitch Scorer", layout="wide")
@@ -14,9 +14,52 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
     st.error("🔑 API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
+
 genai.configure(api_key=api_key)
 
-# --- 2. HELPER FUNCTIONS ---
+# --- 2. KNOWLEDGE BASE (THE ANCHORS) ---
+# This strictly defines what 1 vs 3 stars looks like.
+RUBRIC_GUIDE = """
+CASE STUDY ANCHORS (Use these to grade):
+
+1. PROBLEM IDENTIFICATION ("Why you?")
+   ⭐ 1 STAR (BAD): "We are passionate students who love music." 
+   (Reasoning: Generic passion, no unique leverage.)
+   ⭐ 3 STAR (GOOD): "Our CTO holds a patent in audio signal processing and I managed a $2M inventory at Guitar Center."
+   (Reasoning: Specific, verifiable, relevant domain expertise.)
+
+2. CUSTOMER DISCOVERY ("Who is the customer?")
+   ⭐ 1 STAR (BAD): "Everyone who owns a home is our customer."
+   (Reasoning: TAM is not a customer profile. Too broad.)
+   ⭐ 3 STAR (GOOD): "Our beachhead is single-family homeowners in the Northeast with oil heat (12% of region)."
+   (Reasoning: Specific geography, demographic, and technical constraint.)
+
+3. VALIDATION ("How do you know?")
+   ⭐ 1 STAR (BAD): "We sent out a survey and people liked it."
+   (Reasoning: Surveys are weak evidence of purchase intent.)
+   ⭐ 3 STAR (GOOD): "We pre-sold 50 units at $20 each using a smoke-test landing page."
+   (Reasoning: Financial commitment and actual behavior tracked.)
+"""
+
+RUBRIC_QUESTIONS = """
+SECTION 1: PROBLEM
+1. What is the problem you want to solve?
+2. Why do you care about solving this problem?
+3. Why are you uniquely qualified to solve this problem?
+4. Initial thoughts on finding customers?
+5. Initial thoughts on monetization?
+
+SECTION 2: DISCOVERY
+6. Who is the customer/end user?
+7. Have you carved out user profile specifics? (Who have you talked to?)
+8. How are customers currently solving this problem?
+9. What are the competitive products?
+10. Prototype status?
+11. Analysis of results?
+12. What do you need now?
+"""
+
+# --- 3. HELPER FUNCTIONS ---
 def extract_text(file, file_type):
     text = ""
     try:
@@ -29,95 +72,95 @@ def extract_text(file, file_type):
                 for shape in slide.shapes:
                     if hasattr(shape, "text"):
                         text += shape.text + "\n"
-    except Exception as e:
+    except Exception:
         return None
     return text
 
 def clean_json_response(response_text):
-    """
-    Sometimes the AI wraps JSON in markdown code blocks (```json ... ```).
-    This function strips them out to get raw JSON.
-    """
-    # Remove code block markers
     text = re.sub(r'```json\n?', '', response_text)
     text = re.sub(r'```', '', text)
     return text.strip()
 
-# --- 3. THE BRAIN ---
+def generate_google_link(query):
+    encoded = urllib.parse.quote(query)
+    return f"https://www.google.com/search?q={encoded}"
+
+# --- 4. AGENT 1: THE JUDGE ---
 def analyze_pitch(deck_text):
-    rubric = """
-    SECTION 1: PROBLEM IDENTIFICATION
-    1. What is the problem you want to solve?
-    2. Why do you care about solving this problem?
-    3. Why are you uniquely qualified to solve this problem?
-    4. What are your initial thoughts on how to find/identify your customers?
-    5. What are your initial thoughts on how you will monetize your idea?
-
-    SECTION 2: CUSTOMER DISCOVERY
-    6. Who is the customer and/or end user that has this problem?
-    7. Have you carved out the user profile specifics? How do you know? Who have you talked to?
-    8. How are your customers currently solving this problem?
-    9. What are the competitive products in the market?
-    10. What have you done to prototype your ideas?
-    11. How have you responded or analyzed your results?
-    12. What do you need now?
-    """
-
-    # WE REQUEST JSON OUTPUT NOW
     prompt = f"""
     You are a strict Judge for the 'Eureka' Pitch Competition.
     
-    TASK: Score the uploaded pitch deck based *strictly* on the Eureka Rubric below.
-    
+    TASK: Score the uploaded pitch deck based on the RUBRIC below.
+    Use the "CASE STUDY ANCHORS" to determine if a score is 1 or 3.
+
     INPUT PITCH DECK:
     "{deck_text[:30000]}"
 
-    RUBRIC:
-    {rubric}
+    RUBRIC QUESTIONS:
+    {RUBRIC_QUESTIONS}
+
+    CASE STUDY ANCHORS (STRICT RULES):
+    {RUBRIC_GUIDE}
 
     OUTPUT FORMAT:
-    You must respond with VALID JSON ONLY. Do not speak outside the JSON.
-    The JSON must follow this exact structure:
+    Respond with VALID JSON ONLY:
     {{
         "reviews": [
             {{
-                "category": "Problem Identification",
                 "question": "1. What is the problem?",
                 "score": 1,
-                "reasoning": "The deck does not mention..."
+                "reasoning": "The deck only states..."
             }},
-            ... (one object for every question in rubric)
+            ...
         ],
         "total_score": 0,
-        "hard_truth": "A short, harsh summary paragraph."
+        "hard_truth": "Summary paragraph."
     }}
-
-    SCORING LEGEND:
-    - 3 (High): Specific, evidence-based validation.
-    - 2 (Medium): Present but vague.
-    - 1 (Low): Missing or generic.
     """
     
-    # Model Logic with Fallback
-    model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-pro"]
-    
-    for model_name in model_options:
+    # Try models in order
+    model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    for m in model_options:
         try:
-            try:
-                model = genai.GenerativeModel(model_name, generation_config={"response_mime_type": "application/json"})
-            except:
-                model = genai.GenerativeModel(f"models/{model_name}")
-                
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception:
+            model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
+            return model.generate_content(prompt).text
+        except:
             continue
-            
     return None
 
-# --- 4. THE UI ---
-st.title("Eureka Pitch Scorer")
-st.markdown("### Drop in a deck. Get a structured scorecard.")
+# --- 5. AGENT 2: THE TEACHER (Case Studies) ---
+def get_case_studies(weak_areas_list):
+    # We turn the list of weak questions into a string
+    weaknesses_str = "\n".join([f"- {w['question']} (Score: {w['score']})" for w in weak_areas_list])
+    
+    prompt = f"""
+    You are a Startup Mentor. The user has failed the following areas in their pitch:
+    {weaknesses_str}
+    
+    TASK:
+    For EACH weakness, identify a famous successful startup (Airbnb, Dropbox, Uber, DoorDash, etc.) that solved this specific problem perfectly in their early pitch deck.
+    
+    OUTPUT FORMAT (JSON):
+    {{
+        "case_studies": [
+            {{
+                "weakness": "Customer Discovery",
+                "example_company": "Airbnb",
+                "lesson": "Airbnb didn't just say 'travelers'. They specifically targeted attendees of a design conference in SF when hotels were sold out.",
+                "search_query": "Airbnb pitch deck customer validation slide" 
+            }}
+        ]
+    }}
+    """
+    
+    model = genai.GenerativeModel("gemini-1.5-flash", generation_config={"response_mime_type": "application/json"})
+    return model.generate_content(prompt).text
+
+# --- 6. THE UI ---
+st.title("💡 Eureka Pitch Scorer & Coach")
+
+if "analysis_data" not in st.session_state:
+    st.session_state["analysis_data"] = None
 
 uploaded_file = st.file_uploader("Upload Pitch Deck", type=["pdf", "pptx"])
 
@@ -126,54 +169,66 @@ if uploaded_file and st.button("Run Evaluation"):
         ftype = uploaded_file.name.split(".")[-1].lower()
         extracted_text = extract_text(uploaded_file, ftype)
         
-    if not extracted_text or len(extracted_text) < 50:
-        st.error("Could not extract text.")
-    else:
-        with st.spinner("Judging (Thinking in JSON)..."):
+    if extracted_text:
+        with st.spinner("Judging against Anchors..."):
             raw_result = analyze_pitch(extracted_text)
-            
             if raw_result:
                 try:
-                    # Parse the JSON
-                    data = json.loads(clean_json_response(raw_result))
+                    st.session_state["analysis_data"] = json.loads(clean_json_response(raw_result))
+                except:
+                    st.error("Error parsing AI response.")
+
+# --- DISPLAY RESULTS ---
+if st.session_state["analysis_data"]:
+    data = st.session_state["analysis_data"]
+    
+    # Top Section: Score
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.metric("Total Score", f"{data.get('total_score')}/36")
+    with col2:
+        st.error(f"**The Hard Truth:** {data.get('hard_truth')}")
+
+    st.divider()
+    st.subheader("📋 Detailed Report Card")
+    
+    # Custom Layout for Text Wrapping (Instead of Dataframe)
+    for review in data['reviews']:
+        # Color code the score
+        score = review['score']
+        color = "red" if score == 1 else "orange" if score == 2 else "green"
+        
+        with st.container():
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.markdown(f"**{review['question']}**")
+                st.markdown(f":{color}[**Score: {score}/3**]")
+            with c2:
+                st.markdown(f"_{review['reasoning']}_")
+            st.divider()
+
+    # --- REMEDIATION SECTION ---
+    # Identify weak points
+    weak_points = [r for r in data['reviews'] if r['score'] < 3]
+    
+    if weak_points:
+        st.header("🎓 Case Study Remediation")
+        st.info(f"We found {len(weak_points)} areas for improvement. Click below to see how unicorn companies solved these specific problems.")
+        
+        if st.button("Find Case Studies for My Weaknesses"):
+            with st.spinner("Searching for similar business cases..."):
+                remedy_raw = get_case_studies(weak_points)
+                try:
+                    remedy_data = json.loads(clean_json_response(remedy_raw))
                     
-                    # 1. Display The "Hard Truth" First
-                    st.error(f"The Hard Truth: {data.get('hard_truth', 'No summary provided.')}")
-                    
-                    # 2. Display Total Score
-                    score = data.get('total_score', 0)
-                    st.metric(label="Total Score (out of 36)", value=f"{score}/36")
-                    
-                    # 3. Display The Table
-                    st.subheader("Detailed Rubric Breakdown")
-                    
-                    # Convert list of reviews to Pandas DataFrame for a pretty UI
-                    df = pd.DataFrame(data['reviews'])
-                    
-                    # Configure the columns for the UI
-                    st.dataframe(
-                        df, 
-                        column_config={
-                            "score": st.column_config.NumberColumn(
-                                "Score",
-                                help="1 (Low) to 3 (High)",
-                                format="%d ⭐"
-                            ),
-                            "reasoning": st.column_config.TextColumn(
-                                "Judge's Reasoning",
-                                width="large"
-                            ),
-                            "question": st.column_config.TextColumn(
-                                "Rubric Question",
-                                width="medium"
-                            )
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                    
-                except json.JSONDecodeError:
-                    st.error("The AI failed to produce valid JSON. Here is the raw text:")
-                    st.text(raw_result)
-            else:
-                st.error("API Connection Failed.")
+                    for study in remedy_data.get('case_studies', []):
+                        with st.expander(f"Fixing: {study['weakness']} (Example: {study['example_company']})", expanded=True):
+                            st.markdown(f"**The Lesson:** {study['lesson']}")
+                            
+                            # GENERATE THE LINK
+                            link = generate_google_link(study['search_query'])
+                            st.markdown(f"🔎 **[Click to see the real slide on Google]({link})**")
+                            st.caption(f"Search Query: '{study['search_query']}'")
+                            
+                except Exception as e:
+                    st.error(f"Could not load case studies: {e}")
