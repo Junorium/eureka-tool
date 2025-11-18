@@ -34,7 +34,7 @@ def extract_text(file, file_type):
         return None
     return text
 
-# --- 3. THE BRAIN (Corrected Model Names) ---
+# --- 3. THE BRAIN (Updated for YOUR available models) ---
 def analyze_pitch(deck_text):
     rubric = """
     SECTION 1: PROBLEM IDENTIFICATION
@@ -65,7 +65,7 @@ def analyze_pitch(deck_text):
     - **1 (Low):** Missing, completely generic, or ignored.
 
     INPUT PITCH DECK:
-    "{deck_text[:15000]}"
+    "{deck_text[:30000]}"
 
     RUBRIC QUESTIONS:
     {rubric}
@@ -79,37 +79,38 @@ def analyze_pitch(deck_text):
     2. **The "Hard Truth"**: One paragraph on why this pitch would fail investment today.
     """
     
-    # We explicitly try the most stable model names in order of preference
-    model_options = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+    # UPDATED: We use the exact models from your debug list
+    # We try 2.5-flash first (fastest/newest), then 2.0-flash (stable), then generic 'latest'
+    model_options = [
+        "gemini-2.5-flash", 
+        "gemini-2.0-flash", 
+        "gemini-pro-latest"
+    ]
     
     last_error = None
+    
     for model_name in model_options:
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
+            # Some SDK versions prefer the "models/" prefix, some don't. We try both.
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                return response.text
+            except:
+                # Retry with prefix if the plain name fails
+                model = genai.GenerativeModel(f"models/{model_name}")
+                response = model.generate_content(prompt)
+                return response.text
+                
         except Exception as e:
             last_error = e
-            continue # Try next model
+            continue # If this model fails, loop to the next one
             
-    # If all fail, return the error
     return f"API Error: Could not connect to any models. Last error: {last_error}"
 
 # --- 4. THE UI ---
 st.title("Eureka Pitch Scorer")
 st.markdown("### Drop in a deck. Get a score.")
-
-# Sidebar for Debugging (Hidden unless clicked)
-with st.sidebar:
-    st.header("Debug Menu")
-    if st.button("Check Available Models"):
-        try:
-            st.write("Your API Key has access to:")
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    st.code(m.name)
-        except Exception as e:
-            st.error(f"Could not list models: {e}")
 
 uploaded_file = st.file_uploader("Upload Pitch Deck", type=["pdf", "pptx"])
 
@@ -122,6 +123,6 @@ if uploaded_file:
         if not extracted_text or len(extracted_text) < 50:
             st.error("Could not extract text. Ensure the file is not just images.")
         else:
-            with st.spinner("Judging (this takes ~10s)..."):
+            with st.spinner("Judging with Gemini 2.5..."):
                 result = analyze_pitch(extracted_text)
                 st.markdown(result)
