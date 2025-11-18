@@ -12,7 +12,7 @@ st.set_page_config(page_title="Eureka Pitch Scorer", layout="wide")
 # --- 1. AUTHENTICATION ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("🔑 API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
+    st.error("API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -173,7 +173,7 @@ def get_case_studies(weak_areas_list):
     return None
 
 # --- 6. THE UI ---
-st.title("💡 Eureka Pitch Scorer & Coach")
+st.title("EUREKA! Pitch Scorer & Coach")
 
 if "analysis_data" not in st.session_state:
     st.session_state["analysis_data"] = None
@@ -186,7 +186,7 @@ if uploaded_file and st.button("Run Evaluation"):
         extracted_text = extract_text(uploaded_file, ftype)
         
     if extracted_text:
-        with st.spinner("Judging against Anchors..."):
+        with st.spinner("Judging..."):
             raw_result = analyze_pitch(extracted_text)
             if raw_result:
                 try:
@@ -206,7 +206,7 @@ if st.session_state["analysis_data"]:
         st.error(f"**The Hard Truth:** {data.get('hard_truth')}")
 
     st.divider()
-    st.subheader("📋 Detailed Report Card")
+    st.subheader("Detailed Report Card")
     
     # Report Card Loop
     if 'reviews' in data:
@@ -229,7 +229,7 @@ if st.session_state["analysis_data"]:
     weak_points = [r for r in data.get('reviews', []) if r['score'] < 3]
     
     if weak_points:
-        st.header("🎓 Case Study Remediation")
+        st.header("Case Study Remediation")
         st.info(f"We found {len(weak_points)} areas for improvement. Click below to see how unicorn companies solved these specific problems.")
         
         if st.button("Find Case Studies for My Weaknesses"):
@@ -244,7 +244,7 @@ if st.session_state["analysis_data"]:
                             with st.expander(f"Fixing: {study['weakness']} (Example: {study['example_company']})", expanded=True):
                                 st.markdown(f"**The Lesson:** {study['lesson']}")
                                 link = generate_google_link(study['search_query'])
-                                st.markdown(f"🔎 **[Click to see the real slide on Google]({link})**")
+                                st.markdown(f"**[Click to see the real slide on Google]({link})**")
                                 st.caption(f"Search Query: '{study['search_query']}'")
                                 
                     except Exception as e:
