@@ -18,7 +18,6 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 # --- 2. KNOWLEDGE BASE (THE ANCHORS) ---
-# This strictly defines what 1 vs 3 stars looks like.
 RUBRIC_GUIDE = """
 CASE STUDY ANCHORS (Use these to grade):
 
@@ -118,17 +117,24 @@ def analyze_pitch(deck_text):
     }}
     """
     
-    # Try models in order
+    # Try models in order (Using your approved list)
     model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    
     for m in model_options:
         try:
+            # Try strict JSON mode
             model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
             return model.generate_content(prompt).text
         except:
-            continue
+            try:
+                # Retry with 'models/' prefix if needed
+                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
+                return model.generate_content(prompt).text
+            except:
+                continue
     return None
 
-# --- 5. AGENT 2: THE TEACHER (Case Studies) ---
+# --- 5. AGENT 2: THE TEACHER (FIXED MODEL SELECTION) ---
 def get_case_studies(weak_areas_list):
     # We turn the list of weak questions into a string
     weaknesses_str = "\n".join([f"- {w['question']} (Score: {w['score']})" for w in weak_areas_list])
@@ -153,8 +159,21 @@ def get_case_studies(weak_areas_list):
     }}
     """
     
-    model = genai.GenerativeModel("gemini-1.5-flash", generation_config={"response_mime_type": "application/json"})
-    return model.generate_content(prompt).text
+    # FIXED: We now loop through the approved models instead of hardcoding 1.5-flash
+    model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    
+    for m in model_options:
+        try:
+            model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
+            return model.generate_content(prompt).text
+        except:
+             try:
+                # Retry with 'models/' prefix
+                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
+                return model.generate_content(prompt).text
+             except:
+                continue
+    return None
 
 # --- 6. THE UI ---
 st.title("💡 Eureka Pitch Scorer & Coach")
@@ -176,7 +195,7 @@ if uploaded_file and st.button("Run Evaluation"):
                 try:
                     st.session_state["analysis_data"] = json.loads(clean_json_response(raw_result))
                 except:
-                    st.error("Error parsing AI response.")
+                    st.error("Error parsing AI response. Please try again.")
 
 # --- DISPLAY RESULTS ---
 if st.session_state["analysis_data"]:
@@ -192,43 +211,10 @@ if st.session_state["analysis_data"]:
     st.divider()
     st.subheader("📋 Detailed Report Card")
     
-    # Custom Layout for Text Wrapping (Instead of Dataframe)
+    # Report Card Loop
     for review in data['reviews']:
-        # Color code the score
         score = review['score']
         color = "red" if score == 1 else "orange" if score == 2 else "green"
         
         with st.container():
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                st.markdown(f"**{review['question']}**")
-                st.markdown(f":{color}[**Score: {score}/3**]")
-            with c2:
-                st.markdown(f"_{review['reasoning']}_")
-            st.divider()
-
-    # --- REMEDIATION SECTION ---
-    # Identify weak points
-    weak_points = [r for r in data['reviews'] if r['score'] < 3]
-    
-    if weak_points:
-        st.header("🎓 Case Study Remediation")
-        st.info(f"We found {len(weak_points)} areas for improvement. Click below to see how unicorn companies solved these specific problems.")
-        
-        if st.button("Find Case Studies for My Weaknesses"):
-            with st.spinner("Searching for similar business cases..."):
-                remedy_raw = get_case_studies(weak_points)
-                try:
-                    remedy_data = json.loads(clean_json_response(remedy_raw))
-                    
-                    for study in remedy_data.get('case_studies', []):
-                        with st.expander(f"Fixing: {study['weakness']} (Example: {study['example_company']})", expanded=True):
-                            st.markdown(f"**The Lesson:** {study['lesson']}")
-                            
-                            # GENERATE THE LINK
-                            link = generate_google_link(study['search_query'])
-                            st.markdown(f"🔎 **[Click to see the real slide on Google]({link})**")
-                            st.caption(f"Search Query: '{study['search_query']}'")
-                            
-                except Exception as e:
-                    st.error(f"Could not load case studies: {e}")
+            c1, c2 = st.columns
