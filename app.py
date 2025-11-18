@@ -2,21 +2,21 @@ import streamlit as st
 import pdfplumber
 import pptx
 import google.generativeai as genai
-import os
+import pandas as pd
+import json
+import re
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Eureka Pitch Scorer", layout="wide")
 
 # --- 1. AUTHENTICATION ---
 api_key = st.secrets.get("GEMINI_API_KEY")
-
 if not api_key:
-    st.error("API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
+    st.error("🔑 API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
-
 genai.configure(api_key=api_key)
 
-# --- 2. PARSING FUNCTIONS ---
+# --- 2. HELPER FUNCTIONS ---
 def extract_text(file, file_type):
     text = ""
     try:
@@ -30,11 +30,20 @@ def extract_text(file, file_type):
                     if hasattr(shape, "text"):
                         text += shape.text + "\n"
     except Exception as e:
-        st.warning(f"Could not read file: {e}")
         return None
     return text
 
-# --- 3. THE BRAIN (Updated for YOUR available models) ---
+def clean_json_response(response_text):
+    """
+    Sometimes the AI wraps JSON in markdown code blocks (```json ... ```).
+    This function strips them out to get raw JSON.
+    """
+    # Remove code block markers
+    text = re.sub(r'```json\n?', '', response_text)
+    text = re.sub(r'```', '', text)
+    return text.strip()
+
+# --- 3. THE BRAIN ---
 def analyze_pitch(deck_text):
     rubric = """
     SECTION 1: PROBLEM IDENTIFICATION
@@ -54,75 +63,117 @@ def analyze_pitch(deck_text):
     12. What do you need now?
     """
 
+    # WE REQUEST JSON OUTPUT NOW
     prompt = f"""
     You are a strict Judge for the 'Eureka' Pitch Competition.
     
     TASK: Score the uploaded pitch deck based *strictly* on the Eureka Rubric below.
     
-    SCORING LEGEND:
-    - **3 (High):** Specific, evidence-based, clearly defined (e.g., cites specific interviews, numbers, or distinct validation).
-    - **2 (Medium):** Present but vague (e.g., "People need this" without proof).
-    - **1 (Low):** Missing, completely generic, or ignored.
-
     INPUT PITCH DECK:
     "{deck_text[:30000]}"
 
-    RUBRIC QUESTIONS:
+    RUBRIC:
     {rubric}
 
-    OUTPUT INSTRUCTIONS:
-    Generate a Markdown table with exactly these columns:
-    | Category | Question | Score (1-3) | Judge's Reasoning (Cite specific text) |
+    OUTPUT FORMAT:
+    You must respond with VALID JSON ONLY. Do not speak outside the JSON.
+    The JSON must follow this exact structure:
+    {{
+        "reviews": [
+            {{
+                "category": "Problem Identification",
+                "question": "1. What is the problem?",
+                "score": 1,
+                "reasoning": "The deck does not mention..."
+            }},
+            ... (one object for every question in rubric)
+        ],
+        "total_score": 0,
+        "hard_truth": "A short, harsh summary paragraph."
+    }}
 
-    After the table, provide:
-    1. **Total Score** (Calculated sum out of 36).
-    2. **The "Hard Truth"**: One paragraph on why this pitch would fail investment today.
+    SCORING LEGEND:
+    - 3 (High): Specific, evidence-based validation.
+    - 2 (Medium): Present but vague.
+    - 1 (Low): Missing or generic.
     """
     
-    # UPDATED: We use the exact models from your debug list
-    # We try 2.5-flash first (fastest/newest), then 2.0-flash (stable), then generic 'latest'
-    model_options = [
-        "gemini-2.5-flash", 
-        "gemini-2.0-flash", 
-        "gemini-pro-latest"
-    ]
-    
-    last_error = None
+    # Model Logic with Fallback
+    model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-pro"]
     
     for model_name in model_options:
         try:
-            # Some SDK versions prefer the "models/" prefix, some don't. We try both.
             try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
-                return response.text
+                model = genai.GenerativeModel(model_name, generation_config={"response_mime_type": "application/json"})
             except:
-                # Retry with prefix if the plain name fails
                 model = genai.GenerativeModel(f"models/{model_name}")
-                response = model.generate_content(prompt)
-                return response.text
                 
-        except Exception as e:
-            last_error = e
-            continue # If this model fails, loop to the next one
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception:
+            continue
             
-    return f"API Error: Could not connect to any models. Last error: {last_error}"
+    return None
 
 # --- 4. THE UI ---
 st.title("Eureka Pitch Scorer")
-st.markdown("### Drop in a deck. Get a score.")
+st.markdown("### Drop in a deck. Get a structured scorecard.")
 
 uploaded_file = st.file_uploader("Upload Pitch Deck", type=["pdf", "pptx"])
 
-if uploaded_file:
-    if st.button("Run Evaluation"):
-        with st.spinner("Reading file..."):
-            ftype = uploaded_file.name.split(".")[-1].lower()
-            extracted_text = extract_text(uploaded_file, ftype)
+if uploaded_file and st.button("Run Evaluation"):
+    with st.spinner("Reading file..."):
+        ftype = uploaded_file.name.split(".")[-1].lower()
+        extracted_text = extract_text(uploaded_file, ftype)
+        
+    if not extracted_text or len(extracted_text) < 50:
+        st.error("Could not extract text.")
+    else:
+        with st.spinner("Judging (Thinking in JSON)..."):
+            raw_result = analyze_pitch(extracted_text)
             
-        if not extracted_text or len(extracted_text) < 50:
-            st.error("Could not extract text. Ensure the file is not just images.")
-        else:
-            with st.spinner("Judging with Gemini 2.5..."):
-                result = analyze_pitch(extracted_text)
-                st.markdown(result)
+            if raw_result:
+                try:
+                    # Parse the JSON
+                    data = json.loads(clean_json_response(raw_result))
+                    
+                    # 1. Display The "Hard Truth" First
+                    st.error(f"The Hard Truth: {data.get('hard_truth', 'No summary provided.')}")
+                    
+                    # 2. Display Total Score
+                    score = data.get('total_score', 0)
+                    st.metric(label="Total Score (out of 36)", value=f"{score}/36")
+                    
+                    # 3. Display The Table
+                    st.subheader("Detailed Rubric Breakdown")
+                    
+                    # Convert list of reviews to Pandas DataFrame for a pretty UI
+                    df = pd.DataFrame(data['reviews'])
+                    
+                    # Configure the columns for the UI
+                    st.dataframe(
+                        df, 
+                        column_config={
+                            "score": st.column_config.NumberColumn(
+                                "Score",
+                                help="1 (Low) to 3 (High)",
+                                format="%d ⭐"
+                            ),
+                            "reasoning": st.column_config.TextColumn(
+                                "Judge's Reasoning",
+                                width="large"
+                            ),
+                            "question": st.column_config.TextColumn(
+                                "Rubric Question",
+                                width="medium"
+                            )
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    
+                except json.JSONDecodeError:
+                    st.error("The AI failed to produce valid JSON. Here is the raw text:")
+                    st.text(raw_result)
+            else:
+                st.error("API Connection Failed.")
