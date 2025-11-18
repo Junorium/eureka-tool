@@ -7,12 +7,11 @@ import os
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Eureka Pitch Scorer", layout="wide")
 
-# --- 1. AUTHENTICATION (Loads from Secrets) ---
-# We check if the key is in Streamlit Secrets (for Cloud) or local environment
+# --- 1. AUTHENTICATION ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 
 if not api_key:
-    st.error("🔑 API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
+    st.error("API Key missing. Please add GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -31,12 +30,19 @@ def extract_text(file, file_type):
                     if hasattr(shape, "text"):
                         text += shape.text + "\n"
     except Exception as e:
+        st.warning(f"Could not read file: {e}")
         return None
     return text
 
-# --- 3. THE BRAIN (Eureka Rubric Logic) ---
+# --- 3. THE BRAIN (Robust Model Selection) ---
+def get_model():
+    # We try the latest Flash model first, then fall back to Pro
+    try:
+        return genai.GenerativeModel("gemini-1.5-flash-latest")
+    except:
+        return genai.GenerativeModel("gemini-pro")
+
 def analyze_pitch(deck_text):
-    # The Eureka Rubric explicitly defined
     rubric = """
     SECTION 1: PROBLEM IDENTIFICATION
     1. What is the problem you want to solve?
@@ -80,35 +86,37 @@ def analyze_pitch(deck_text):
     2. **The "Hard Truth"**: One paragraph on why this pitch would fail investment today.
     """
     
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    # ERROR HANDLING WRAPPER
+    try:
+        # Try Primary Model
+        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e1:
+        # If 1.5-flash fails (NotFound), try Standard Pro
+        try:
+            print(f"Primary model failed: {e1}. Switching to fallback...")
+            model = genai.GenerativeModel("gemini-pro")
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e2:
+            return f"API Error: Both models failed. \nError 1: {e1}\nError 2: {e2}"
 
-# --- 4. THE USER INTERFACE ---
-st.title("💡 Eureka Pitch Scorer")
-st.markdown("""
-**Instructions for Advisor:**
-1. Drop the student's **PPTX** or **PDF** below.
-2. Wait ~10 seconds.
-3. Get a strict **1-3 score** based exactly on the Eureka Rubric questions.
-""")
+# --- 4. THE UI ---
+st.title("EUREKA! Pitch Scorer")
+st.markdown("### Drop in a deck. Get a score. (Still testing)")
 
 uploaded_file = st.file_uploader("Upload Pitch Deck", type=["pdf", "pptx"])
 
 if uploaded_file:
     if st.button("Run Evaluation"):
-        with st.spinner("Reading file and consulting the rubric..."):
-            # Determine file type
+        with st.spinner("Reading file..."):
             ftype = uploaded_file.name.split(".")[-1].lower()
-            
-            # Extract
             extracted_text = extract_text(uploaded_file, ftype)
             
-            if not extracted_text or len(extracted_text) < 50:
-                st.error("⚠️ Could not read text. Ensure the PDF/PPTX is text-based, not just images.")
-            else:
-                # Analyze
+        if not extracted_text or len(extracted_text) < 50:
+            st.error("Could not extract text. Ensure the file is not just images.")
+        else:
+            with st.spinner("Judging (this takes ~10s)..."):
                 result = analyze_pitch(extracted_text)
-                st.success("Evaluation Complete")
-                st.markdown("### 📋 Scorecard")
                 st.markdown(result)
