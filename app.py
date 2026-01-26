@@ -134,45 +134,50 @@ def generate_google_link(query):
 # --- 4. AGENT 1: THE JUDGE ---
 def analyze_pitch(deck_text):
     prompt = f"""
-    You are a Venture Capital Associate judging the 'Eureka' Pitch Competition.
-    Your goal is to provide a harsh but fair assessment using a strict 3-point scale.
+    You are a strict Judge for the 'Eureka' Pitch Competition.
     
-    CRITICAL INSTRUCTION: You must distinguish between "Average" (2) and "Great" (3). 
-    Do not default to 1. If they show logic but no data, give them a 2. If they show data/traction, give them a 3.
+    TASK: Score the uploaded pitch deck based on the RUBRIC below.
+    Use the "CASE STUDY ANCHORS" to determine if a score is 1 or 3.
 
-    INPUT PITCH DECK TEXT:
+    INPUT PITCH DECK:
     "{deck_text[:30000]}"
 
-    GRADING MATRIX (Use this strictly):
-    {RUBRIC_GUIDE}
-
-    QUESTIONS TO SCORE:
+    RUBRIC QUESTIONS:
     {RUBRIC_QUESTIONS}
 
-    OUTPUT FORMAT (JSON ONLY):
+    CASE STUDY ANCHORS (STRICT RULES):
+    {RUBRIC_GUIDE}
+
+    OUTPUT FORMAT:
+    Respond with VALID JSON ONLY:
     {{
         "reviews": [
             {{
-                "question": "1. What is the specific problem?",
-                "score": 2,
-                "reasoning": "You identified a plausible pain point regarding X, but you did not quantify the financial loss, keeping this from a 3."
+                "question": "1. What is the problem?",
+                "score": 1,
+                "reasoning": "The deck only states..."
             }},
-             ... (Repeat for all 12 questions)
+            ...
         ],
         "total_score": 0,
-        "hard_truth": "A 2-3 sentence summary of why they would or would not get funding right now."
+        "hard_truth": "Summary paragraph."
     }}
     """
     
-    # Try models in order
-    model_options = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    # Try models in order 
+    model_options = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
     
     for m in model_options:
         try:
             model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
             return model.generate_content(prompt).text
         except:
-             continue
+            try:
+                # Fallback to models/ prefix if needed
+                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
+                return model.generate_content(prompt).text
+            except:
+                continue
     return None
 
 # --- 5. AGENT 2: THE TEACHER ---
