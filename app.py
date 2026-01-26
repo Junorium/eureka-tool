@@ -164,19 +164,33 @@ def analyze_pitch(deck_text):
     }}
     """
     
-    # REMOVED gemini-2.0 (it is experimental and often causes errors). 
-    # Stuck to the stable 1.5 models.
-    model_options = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    # UPDATED: Exhaustive list of model names to prevent 404 errors
+    # This tries the newest versions first, then falls back to older stable ones.
+    model_options = [
+        "gemini-1.5-flash", 
+        "gemini-1.5-flash-latest", 
+        "gemini-1.5-flash-001",
+        "gemini-1.5-pro", 
+        "gemini-1.5-pro-latest", 
+        "gemini-1.5-pro-001",
+        "gemini-pro" # Fallback to Gemini 1.0 if 1.5 is unavailable
+    ]
     
     for m in model_options:
         try:
+            # Try simply by name first
             model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
-            # DEBUGGING: This prints the specific error to your screen so you know what's wrong
-            st.warning(f"Model {m} failed to run. Error: {e}")
-            continue
+            # If standard fail, try with 'models/' prefix which is sometimes required
+            try:
+                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
+                response = model.generate_content(prompt)
+                return response.text
+            except Exception as e2:
+                print(f"Failed {m}: {e}") # Print to console for logging
+                continue
             
     return None
 
