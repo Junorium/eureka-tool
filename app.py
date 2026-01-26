@@ -19,43 +19,90 @@ genai.configure(api_key=api_key)
 
 # --- 2. KNOWLEDGE BASE (THE ANCHORS) ---
 RUBRIC_GUIDE = """
-CASE STUDY ANCHORS (Use these to grade):
+SCORING PHILOSOPHY:
+- 1 STAR (WEAK): Generic, vague, assumes "everyone" is a customer, lacks data, purely aspirational.
+- 2 STAR (AVERAGE): Plausible logic, standard execution, broad but defined market, secondary research used.
+- 3 STAR (STRONG): "Hair on fire" problem, hyper-specific beachhead, primary data (interviews/sales), unfair advantage (IP/unique history).
 
-1. PROBLEM IDENTIFICATION ("Why you?")
-   ⭐ 1 STAR (BAD): "We are passionate students who love music." 
-   (Reasoning: Generic passion, no unique leverage.)
-   ⭐ 3 STAR (GOOD): "Our CTO holds a patent in audio signal processing and I managed a $2M inventory at Guitar Center."
-   (Reasoning: Specific, verifiable, relevant domain expertise.)
+--- DETAILED CRITERIA MATRIX ---
 
-2. CUSTOMER DISCOVERY ("Who is the customer?")
-   ⭐ 1 STAR (BAD): "Everyone who owns a home is our customer."
-   (Reasoning: TAM is not a customer profile. Too broad.)
-   ⭐ 3 STAR (GOOD): "Our beachhead is single-family homeowners in the Northeast with oil heat (12% of region)."
-   (Reasoning: Specific geography, demographic, and technical constraint.)
+Q1: THE PROBLEM
+[1] "People are bored" or "It's hard to find X." (Subjective, low pain).
+[2] "Small businesses spend too much time on accounting." (Plausible pain, but generalized).
+[3] "Dentists lose $15k/year because insurance claim form 14B is manual." (Quantified, financial, acute pain).
 
-3. VALIDATION ("How do you know?")
-   ⭐ 1 STAR (BAD): "We sent out a survey and people liked it."
-   (Reasoning: Surveys are weak evidence of purchase intent.)
-   ⭐ 3 STAR (GOOD): "We pre-sold 50 units at $20 each using a smoke-test landing page."
-   (Reasoning: Financial commitment and actual behavior tracked.)
+Q2: WHY CARE?
+[1] "We are passionate about this." (Subjective emotion).
+[2] "The market is growing by 10% YOY." (Macro trend, but not urgent).
+[3] "New federal regulation requires this change by 2025 or fines occur." (Urgency/Inevitability).
+
+Q3: TEAM QUALIFICATIONS
+[1] "We are hard-working students/friends." (Generic effort).
+[2] "We are CS majors and one of us studies finance." (Relevant skills, but no track record).
+[3] "CTO has a patent in this specific tech; CEO sold a similar SaaS for $5M." (Unfair advantage/proven execution).
+
+Q4: FINDING CUSTOMERS (GTM)
+[1] "Social media ads and SEO." (The generic "spray and pray").
+[2] "We will partner with University clubs and use instagram influencers." (Targeted, but standard).
+[3] "Direct sales to the top 50 distributors in the Northeast; LOI signed with 2 already." (Specific channel strategy with traction).
+
+Q5: MONETIZATION
+[1] "We will sell data" or "Ads." (Lazy monetization).
+[2] "Subscription model ($10/month)." (Standard, logical).
+[3] "Tiered SaaS: Freemium entry, $500/mo enterprise tier. LTV/CAC ratio modeled at 3:1." ( sophisticated unit economics).
+
+Q6: THE CUSTOMER (BEACHHEAD)
+[1] "Everyone with a smartphone." (Too broad).
+[2] "College students in the US." (Segmented, but still massive).
+[3] "Sophomore Medical Students struggling with Biochemistry in the Ivy League." (Hyper-segmented beachhead).
+
+Q7: USER PROFILES (INTERVIEWS)
+[1] "We sent a survey to our friends." (Biased, low effort).
+[2] "We interviewed 20 people in the target demographic." (Good effort, qualitative).
+[3] "We conducted 50 'Mom Test' interviews and have 5 signed Letters of Intent." (Rigorous discovery + commitment).
+
+Q8: CURRENT SOLUTIONS (STATUS QUO)
+[1] "Nothing exists like this." (Naive/False).
+[2] "They use Excel or Pen & Paper." (Accurate observation).
+[3] "They hire a temp agency for $40/hr which has a 20% error rate." (Deep understanding of the alternative's cost).
+
+Q9: COMPETITION
+[1] "We have no competitors." (Red flag).
+[2] "Competitor X is expensive, we are cheaper." (Price war is a weak moat).
+[3] "Competitor X is legacy on-premise software; we are cloud-native and 10x faster to deploy." (Structural/Technical advantage).
+
+Q10: PROTOTYPE STATUS
+[1] "Idea phase / Sketches."
+[2] "Figma Mockups / Clickable frontend."
+[3] "Functional MVP in the hands of 10 beta testers."
+
+Q11: TRACTION/RESULTS
+[1] "People said they would buy it." (Talk is cheap).
+[2] "Waitlist of 100 emails." (Interest, but no skin in the game).
+[3] "$2,000 in pre-sales or 50 active daily users." (Irrefutable proof of value).
+
+Q12: THE ASK
+[1] "We need money to build it." (Vague).
+[2] "We need $50k for development and marketing." (Standard).
+[3] "We need $50k to hire 1 engineer to reach 1,000 users, allowing us to raise Seed round." (Milestone-based funding).
 """
 
 RUBRIC_QUESTIONS = """
-SECTION 1: PROBLEM
-1. What is the problem you want to solve?
-2. Why do you care about solving this problem?
-3. Why are you uniquely qualified to solve this problem?
-4. Initial thoughts on finding customers?
-5. Initial thoughts on monetization?
+SECTION 1: PROBLEM & TEAM
+1. What is the specific problem you want to solve?
+2. Why is this problem urgent or important (Why care)?
+3. Why is this team uniquely qualified to solve it?
+4. What is the Go-To-Market strategy (Finding customers)?
+5. How does the business make money (Monetization)?
 
-SECTION 2: DISCOVERY
-6. Who is the customer/end user?
-7. Have you carved out user profile specifics? (Who have you talked to?)
-8. How are customers currently solving this problem?
-9. What are the competitive products?
-10. Prototype status?
-11. Analysis of results?
-12. What do you need now?
+SECTION 2: DISCOVERY & VALIDATION
+6. Who is the specific beachhead customer?
+7. Validated User Profile (Who have you actually interviewed)?
+8. Status Quo: How are customers solving this today?
+9. Competition: Why will you win against incumbents?
+10. Prototype/Product Status?
+11. Traction/Analysis of Results?
+12. The Ask: What do you need specifically?
 """
 
 # --- 3. HELPER FUNCTIONS ---
@@ -87,50 +134,45 @@ def generate_google_link(query):
 # --- 4. AGENT 1: THE JUDGE ---
 def analyze_pitch(deck_text):
     prompt = f"""
-    You are a strict Judge for the 'Eureka' Pitch Competition.
+    You are a Venture Capital Associate judging the 'Eureka' Pitch Competition.
+    Your goal is to provide a harsh but fair assessment using a strict 3-point scale.
     
-    TASK: Score the uploaded pitch deck based on the RUBRIC below.
-    Use the "CASE STUDY ANCHORS" to determine if a score is 1 or 3.
+    CRITICAL INSTRUCTION: You must distinguish between "Average" (2) and "Great" (3). 
+    Do not default to 1. If they show logic but no data, give them a 2. If they show data/traction, give them a 3.
 
-    INPUT PITCH DECK:
+    INPUT PITCH DECK TEXT:
     "{deck_text[:30000]}"
 
-    RUBRIC QUESTIONS:
-    {RUBRIC_QUESTIONS}
-
-    CASE STUDY ANCHORS (STRICT RULES):
+    GRADING MATRIX (Use this strictly):
     {RUBRIC_GUIDE}
 
-    OUTPUT FORMAT:
-    Respond with VALID JSON ONLY:
+    QUESTIONS TO SCORE:
+    {RUBRIC_QUESTIONS}
+
+    OUTPUT FORMAT (JSON ONLY):
     {{
         "reviews": [
             {{
-                "question": "1. What is the problem?",
-                "score": 1,
-                "reasoning": "The deck only states..."
+                "question": "1. What is the specific problem?",
+                "score": 2,
+                "reasoning": "You identified a plausible pain point regarding X, but you did not quantify the financial loss, keeping this from a 3."
             }},
-            ...
+             ... (Repeat for all 12 questions)
         ],
         "total_score": 0,
-        "hard_truth": "Summary paragraph."
+        "hard_truth": "A 2-3 sentence summary of why they would or would not get funding right now."
     }}
     """
     
-    # Try models in order (Using your approved list)
-    model_options = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    # Try models in order
+    model_options = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     
     for m in model_options:
         try:
             model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
             return model.generate_content(prompt).text
         except:
-            try:
-                # Retry with 'models/' prefix if needed
-                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
-                return model.generate_content(prompt).text
-            except:
-                continue
+             continue
     return None
 
 # --- 5. AGENT 2: THE TEACHER ---
