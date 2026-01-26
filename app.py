@@ -164,20 +164,20 @@ def analyze_pitch(deck_text):
     }}
     """
     
-    # Try models in order 
-    model_options = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    # REMOVED gemini-2.0 (it is experimental and often causes errors). 
+    # Stuck to the stable 1.5 models.
+    model_options = ["gemini-1.5-flash", "gemini-1.5-pro"]
     
     for m in model_options:
         try:
             model = genai.GenerativeModel(m, generation_config={"response_mime_type": "application/json"})
-            return model.generate_content(prompt).text
-        except:
-            try:
-                # Fallback to models/ prefix if needed
-                model = genai.GenerativeModel(f"models/{m}", generation_config={"response_mime_type": "application/json"})
-                return model.generate_content(prompt).text
-            except:
-                continue
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            # DEBUGGING: This prints the specific error to your screen so you know what's wrong
+            st.warning(f"Model {m} failed to run. Error: {e}")
+            continue
+            
     return None
 
 # --- 5. AGENT 2: THE TEACHER ---
@@ -235,11 +235,19 @@ if uploaded_file and st.button("Run Evaluation"):
     if extracted_text:
         with st.spinner("Judging..."):
             raw_result = analyze_pitch(extracted_text)
+            
+            # FIXED: Added logic to handle failure
             if raw_result:
                 try:
                     st.session_state["analysis_data"] = json.loads(clean_json_response(raw_result))
-                except:
-                    st.error("Error parsing AI response. Please try again.")
+                    st.rerun() # Force a rerun to display results immediately
+                except Exception as e:
+                    st.error(f"Error parsing AI response: {e}")
+                    st.text(raw_result) # Show the raw text for debugging
+            else:
+                st.error("Analysis failed. All AI models returned errors. (See warnings above).")
+    else:
+        st.error("Could not extract text from file. Is it empty or scanned images?")
 
 # --- DISPLAY RESULTS ---
 if st.session_state["analysis_data"]:
